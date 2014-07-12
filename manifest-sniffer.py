@@ -2,6 +2,7 @@
 
 import argparse
 import glob
+import sys
 import os
 from zipfile import ZipFile, BadZipfile, LargeZipFile
 
@@ -50,6 +51,8 @@ def create_argument_parser():
     parser.add_argument("-e", "--exports", help="Checks for the given package in the Export-Package value")
     parser.add_argument("-f", "--file", help="The jar to search in")
     parser.add_argument("-d", "--directory", help="Search all the jars in the given directory")
+    parser.add_argument("--detect-doubles", action="store_true", help="Search for double exports")
+
     return parser
 
 
@@ -70,6 +73,8 @@ def print_imports(jar):
         print("%s, are you sure %s exists?" % (import_error_message, jar))
     except LargeZipFile:
         print("%s, %s requires ZIP64 functionality but it is not enabled." % (import_error_message, jar))
+    except TypeError:
+        print("%s, was unable to parse manifest of %s, am I running with python 2?" % (import_error_message, jar))
 
 
 def print_exports(jar):
@@ -78,6 +83,12 @@ def print_exports(jar):
     try:
         exported_packages = get_package_names(get_manifest_value(jar, export_package_key))
         if arguments.imports in exported_packages:
+            if arguments.detect_doubles is True:
+                for exported_package in exported_packages:
+                    if exported_package not in exported_package_counter.keys():
+                        exported_package_counter[exported_package] = 0
+                    else:
+                        exported_package_counter[exported_package] += 1
             print("%s exports %s" % (jar, arguments.exports))
     except RuntimeError:
         print("%s, can I read %s?" % (export_error_message, jar))
@@ -89,9 +100,21 @@ def print_exports(jar):
         print("%s, are you sure %s exists?" % (export_error_message, jar))
     except LargeZipFile:
         print("%s, %s requires ZIP64 functionality but it is not enabled." % (export_error_message, jar))
+    except TypeError:
+        print("%s, was unable to parse manifest of %s, am I running with python 2?" % (export_error_message, jar))
+
+
+def print_doubles():
+    for exported_package in exported_package_counter.keys():
+        if exported_package_counter[exported_package] > 1:
+            print("%s is exported %d times" % (exported_package, exported_package_counter[exported_package]))
 
 
 def main():
+    if len(sys.argv) < 2:
+        argument_parser.print_help()
+        exit(1)
+
     if arguments.file is not None:
         if arguments.imports is not None:
             print_imports(arguments.file)
@@ -107,8 +130,14 @@ def main():
             if arguments.exports is not None:
                 print_exports(jar)
 
+    if arguments.detect_doubles is True:
+        print_doubles()
+
+    exit(0)
+
 if __name__ == '__main__':
     argument_parser = create_argument_parser()
     arguments = argument_parser.parse_args()
+    exported_package_counter = {}
     main()
 
