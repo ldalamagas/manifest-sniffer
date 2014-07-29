@@ -4,6 +4,7 @@ import argparse
 import glob
 import sys
 import os
+import re
 from zipfile import ZipFile, BadZipfile, LargeZipFile
 
 
@@ -35,7 +36,9 @@ def get_manifest_value(jar, manifest_property):
 
 
 def get_package_names(manifest_line):
-    package_mixed_info = manifest_line.split(",")
+    # split by commas followed by any letter
+    pattern = re.compile(r'[,](?=[a-z,A-Z])')
+    package_mixed_info = pattern.split(manifest_line)
     packages = []
     for text in package_mixed_info:
         packages.append(text.split(";")[0])
@@ -51,7 +54,8 @@ def create_argument_parser():
     parser.add_argument("-e", "--exports", help="Checks for the given package in the Export-Package value")
     parser.add_argument("-f", "--file", help="The jar to search in")
     parser.add_argument("-d", "--directory", help="Search all the jars in the given directory")
-    parser.add_argument("--detect-doubles", action="store_true", help="Search for double exports")
+    parser.add_argument("--detect-double-exports", action="store_true", help="Search for double exports in directory")
+    parser.add_argument("--detect-double-imports", action="store_true", help="Search for double imports in manifest")
 
     return parser
 
@@ -82,8 +86,8 @@ def print_exports(jar):
     export_error_message = "Error while trying to get exported packages"
     try:
         exported_packages = get_package_names(get_manifest_value(jar, export_package_key))
-        if arguments.imports in exported_packages:
-            if arguments.detect_doubles is True:
+        if arguments.exports in exported_packages:
+            if arguments.detect_double_exports is True:
                 for exported_package in exported_packages:
                     if exported_package not in exported_package_counter.keys():
                         exported_package_counter[exported_package] = 0
@@ -104,10 +108,46 @@ def print_exports(jar):
         print("%s, was unable to parse manifest of %s, am I running with python 2?" % (export_error_message, jar))
 
 
-def print_doubles():
+def print_double_exports():
     for exported_package in exported_package_counter.keys():
         if exported_package_counter[exported_package] > 1:
             print("%s is exported %d times" % (exported_package, exported_package_counter[exported_package]))
+
+
+def print_double_imports(jar, imported_package_counter):
+    for imported_package in imported_package_counter.keys():
+        if imported_package_counter[imported_package] > 1:
+            print("%s is imported %d times in %s" % (imported_package, imported_package_counter[imported_package], jar))
+
+
+def detect_double_imports(jar):
+    import_package_key = "Import-Package"
+    error_message = "Error while detecting double imports"
+    imported_package_counter = {}
+    try:
+        manifest_line = get_manifest_value(jar, import_package_key)
+        if manifest_line != "":
+            imported_packages = get_package_names(manifest_line)
+        else:
+            return
+        for imported_package in imported_packages:
+            if imported_package not in imported_package_counter.keys():
+                imported_package_counter[imported_package] = 0
+            else:
+                imported_package_counter[imported_package] += 1
+        print_double_imports(jar, imported_package_counter)
+    except RuntimeError:
+        print("%s, can I read %s?" % (error_message, jar))
+    except KeyError:
+        print("%s, does %s has a MANIFEST.MF?" % (error_message, jar))
+    except BadZipfile:
+        print("%s, %s is not a valid zip file!" % (error_message, jar))
+    except IOError:
+        print("%s, are you sure %s exists?" % (error_message, jar))
+    except LargeZipFile:
+        print("%s, %s requires ZIP64 functionality but it is not enabled." % (error_message, jar))
+    except TypeError:
+        print("%s, was unable to parse manifest of %s, am I running with python 2?" % (error_message, jar))
 
 
 def main():
@@ -122,16 +162,24 @@ def main():
         if arguments.exports is not None:
             print_exports(arguments.file)
 
+        if arguments.detect_double_imports is True:
+            detect_double_imports(arguments.file)
+
     if arguments.directory is not None:
-        for jar in get_jars(arguments.directory):
+        jars = get_jars(arguments.directory)
+        for jar in jars:
             if arguments.imports is not None:
                 print_imports(jar)
 
             if arguments.exports is not None:
                 print_exports(jar)
 
-    if arguments.detect_doubles is True:
-        print_doubles()
+        if arguments.detect_double_imports is True:
+            for jar in jars:
+                detect_double_imports(jar)
+
+    if arguments.detect_double_exports is True:
+        print_double_exports()
 
     exit(0)
 
